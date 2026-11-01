@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Gestos → Partículas</title>
+<title>Gestos → Partículas (modo espelho)</title>
 <style>
   body{margin:0;overflow:hidden;background:#05070f;font-family:system-ui,sans-serif}
   #gl{position:fixed;inset:0;width:100vw;height:100vh}
@@ -18,8 +18,8 @@
 <canvas id="gl"></canvas>
 <video id="cam" autoplay playsinline muted></video>
 <div id="gesture">iniciando…</div>
-<div id="hint">✋ aberta · ✌️ dois dedos · ✊ punho · 🤘 chifres · ☝️ indicador<br>
-Sem câmera? Demo automático roda sozinho. Teclas 1–5 trocam o modo.</div>
+<div id="hint">🖐 modo espelho (padrão): as partículas imitam sua mão.<br>
+Teclas: 1–5 formações clássicas · 6 volta ao espelho.</div>
 
 <script type="module">
 import { FilesetResolver, HandLandmarker } from
@@ -33,22 +33,36 @@ function resize(){ DPR = Math.min(devicePixelRatio,2); W = innerWidth; H = inner
   canvas.width = W*DPR; canvas.height = H*DPR; ctx.setTransform(DPR,0,0,DPR,0,0); }
 resize(); addEventListener('resize', resize);
 
+/* ---------- esqueleto da mão: segmentos (a, b, peso, éDedo) ---------- */
+const SEGS = [];
+const addSeg = (a,b,w,finger)=>{ for(let i=0;i<w;i++) SEGS.push({a,b,finger}); };
+addSeg(0,1,2,1); addSeg(1,2,2,1); addSeg(2,3,2,1); addSeg(3,4,2,1);          // polegar
+for(const b of [5,9,13,17]){                                                // 4 dedos
+  addSeg(0,b,1,0); addSeg(b,b+1,2,1); addSeg(b+1,b+2,2,1); addSeg(b+2,b+3,2,1);
+}
+addSeg(5,9,1,0); addSeg(9,13,1,0); addSeg(13,17,1,0); addSeg(17,0,1,0);      // palma
+
 /* ---------- partículas ---------- */
-const N = 1400, P = [];
-for(let i=0;i<N;i++) P.push({ u1:Math.random(), u2:Math.random(), u3:Math.random(),
-  sp:.6+Math.random()*.9, hue: Math.random()<.75 ? 95+Math.random()*60 : 45+Math.random()*10,
-  lw:1+Math.random()*1.6, x:W/2, y:H/2, ox:W/2, oy:H/2 });
+const N = 1600, P = [];
+for(let i=0;i<N;i++){
+  const seg = SEGS[(Math.random()*SEGS.length)|0];
+  P.push({ seg, t0:Math.random(), flow:.10+Math.random()*.25,
+    j:(Math.random()**2)*7 + (Math.random()<.12 ? 18+Math.random()*26 : 0),
+    ph:Math.random()*TAU, u1:Math.random(), u2:Math.random(), u3:Math.random(),
+    sp:.6+Math.random()*.9, hue: Math.random()<.75 ? 95+Math.random()*60 : 45+Math.random()*10,
+    lw:1+Math.random()*1.6, x:W/2, y:H/2 });
+}
 const stars = Array.from({length:120},()=>({x:Math.random(),y:Math.random(),r:Math.random()*1.2+.3}));
 
-/* ---------- estado (o "useHandStore" da demo) ---------- */
-let mode='open', cand=null, candCount=0, autoCycle=false, cycleIdx=0, nextCycle=0;
-let cx=W/2, cy=H*.45, tcx=cx, tcy=cy, camOK=false, hand=null;
+/* ---------- estado ---------- */
+let mode='mirror', cand=null, candCount=0, autoCycle=false, cycleIdx=0, nextCycle=0;
+let cx=W/2, cy=H*.45, tcx=cx, tcy=cy, camOK=false, hand=null, SL=null; // SL = landmarks em tela
 const cycle=['open','two','fist','rock','point'];
-const LABEL={open:'✋ mão aberta — explosão radial', two:'✌️ dois dedos — dispersão',
+const LABEL={mirror:'🖐 espelho — partículas imitam sua mão',
+  open:'✋ mão aberta — explosão radial', two:'✌️ dois dedos — dispersão',
   fist:'✊ punho — esfera comprimida', rock:'🤘 chifres — chuva de espadas',
   point:'☝️ indicador — onda horizontal'};
 
-/* ---------- classificação do gesto ---------- */
 function classify(lm){
   const d=(a,b)=>Math.hypot(lm[a].x-lm[b].x, lm[a].y-lm[b].y);
   const ext=(tip,pip)=> d(tip,0) > d(pip,0)*1.08;
@@ -61,7 +75,7 @@ function classify(lm){
   return null;
 }
 
-/* ---------- câmera + MediaPipe (o "HandController") ---------- */
+/* ---------- câmera + MediaPipe ---------- */
 (async()=>{ try{
   const stream = await navigator.mediaDevices.getUserMedia({video:{width:640,height:480,facingMode:'user'}});
   video.srcObject = stream; await video.play(); camOK = true;
@@ -70,12 +84,13 @@ function classify(lm){
   hand = await HandLandmarker.createFromOptions(vision,{ baseOptions:{
     modelAssetPath:"https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
     delegate:"GPU"}, runningMode:"VIDEO", numHands:1 });
-}catch(e){ autoCycle = true; } })();
+}catch(e){ autoCycle = true; mode='open'; } })();
 
-addEventListener('keydown', e=>{ const m={'1':'open','2':'two','3':'fist','4':'rock','5':'point'}[e.key];
+addEventListener('keydown', e=>{
+  const m={'1':'open','2':'two','3':'fist','4':'rock','5':'point','6':'mirror','0':'mirror'}[e.key];
   if(m){ mode=m; autoCycle=false; } });
 
-/* ---------- formações (a "Scene") ---------- */
+/* ---------- formações clássicas ---------- */
 function target(p,t,out){
   const R = Math.min(W,H)*.30;
   if(mode==='open'){ const a=p.u2*TAU + t*.25 + p.u3*.5,
@@ -87,7 +102,7 @@ function target(p,t,out){
     out.x=cx+(xx-.5)*W*.9; out.y=cy+(p.u2-.5)*H*.10+Math.sin(xx*7+t)*16; }
   else if(mode==='point'){ out.x=cx+(p.u1-.5)*W*.8;
     out.y=cy+Math.sin(out.x*.012+t*2.2)*(28+40*p.u3)+(p.u2-.5)*14; }
-  else { /* rock = chuva */ out.x=cx+(p.u1-.5)*W*.85; out.y=wrap01(p.u2+t*.22*p.sp)*H; }
+  else { out.x=cx+(p.u1-.5)*W*.85; out.y=wrap01(p.u2+t*.22*p.sp)*H; }
 }
 
 /* ---------- loop ---------- */
@@ -98,10 +113,19 @@ function frame(now){ requestAnimationFrame(frame); const t=now/1000;
   if(camOK && hand && video.readyState>=2){
     const res = hand.detectForVideo(video, now);
     if(res.landmarks?.length){ detected=true; const lm=res.landmarks[0];
-      const g=classify(lm);
-      if(g){ candCount = (g===cand)? candCount+1 : 1; cand=g; if(candCount>=3) mode=g; }
+      if(mode!=='mirror'){                       // classificação só fora do espelho
+        const g=classify(lm);
+        if(g){ candCount=(g===cand)?candCount+1:1; cand=g; if(candCount>=3) mode=g; } }
       let px=0,py=0; for(const i of [0,5,9,13,17]){px+=lm[i].x;py+=lm[i].y;}
-      tcx=(1-px/5)*W; tcy=(py/5)*H; }
+      tcx=(1-px/5)*W; tcy=(py/5)*H;
+      /* converte landmarks p/ tela: normaliza pela bbox + espelha */
+      const AR=(video.videoWidth/video.height)||4/3;
+      let x0=9,x1=0,y0=9,y1=0;
+      for(const q of lm){ const X=q.x*AR; x0=Math.min(x0,X); x1=Math.max(x1,X);
+                          y0=Math.min(y0,q.y); y1=Math.max(y1,q.y); }
+      const S=Math.min(W,H)*.8/Math.max(x1-x0,y1-y0,1e-3), mx=(x0+x1)/2, my=(y0+y1)/2;
+      SL=lm.map(q=>({ x: cx - (q.x*AR-mx)*S, y: cy + (q.y-my)*S }));
+    }
   }
   if(!detected){ tcx=W/2; tcy=H*.45;
     if(autoCycle && now>nextCycle){ nextCycle=now+5000; mode=cycle[cycleIdx++%5]; } }
@@ -118,17 +142,28 @@ function frame(now){ requestAnimationFrame(frame); const t=now/1000;
     ctx.ellipse(cx, H*.10, Math.min(W,H)*.28, Math.min(W,H)*.07, 0, 0, TAU);
     ctx.stroke(); ctx.shadowBlur=0; }
 
-  const trail = mode==='rock'?5:3.5, k=.09;
-  for(const p of P){ target(p,t,tgt);
+  const mirror = mode==='mirror' && SL;
+  const k = mirror? .18 : .09, trail = mode==='rock'?5:3.5;
+  for(const p of P){
+    if(mirror){
+      const A=SL[p.seg.a], B=SL[p.seg.b];
+      const tt=wrap01(p.t0 + t*p.flow);
+      let x=A.x+(B.x-A.x)*tt, y=A.y+(B.y-A.y)*tt;
+      const dx=B.x-A.x, dy=B.y-A.y, L=Math.hypot(dx,dy)||1;
+      const off=p.j*(.6+.4*Math.sin(t*3+p.ph));
+      tgt.x=x+(-dy/L)*off; tgt.y=y+(dx/L)*off;
+      p.tip = p.seg.finger && tt>.82;
+    } else { p.tip=false; target(p,t,tgt); }
     p.ox=p.x; p.oy=p.y;
-    p.x += (p.x-p.ox)*0 + (tgt.x-p.x)*k; p.y += (tgt.y-p.y)*k;
+    p.x+=(tgt.x-p.x)*k; p.y+=(tgt.y-p.y)*k;
     const vx=p.x-p.ox, vy=p.y-p.oy;
-    ctx.strokeStyle=`hsla(${p.hue},95%,62%,.85)`; ctx.lineWidth=p.lw;
+    ctx.strokeStyle=`hsla(${p.hue},95%,${p.tip?80:62}%,.85)`;
+    ctx.lineWidth=p.lw*(p.tip?2:1);
     ctx.beginPath(); ctx.moveTo(p.x-vx*trail,p.y-vy*trail); ctx.lineTo(p.x,p.y); ctx.stroke();
     ctx.fillStyle=`hsla(${p.hue},95%,70%,.5)`;
-    ctx.beginPath(); ctx.arc(p.x,p.y,p.lw*.8,0,TAU); ctx.fill(); }
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.lw*.8*(p.tip?1.8:1),0,TAU); ctx.fill(); }
 
-  const label = detected||camOK ? (LABEL[mode]||'') : LABEL[mode]+' · sem câmera (demo)';
+  const label = LABEL[mode] + (camOK? '' : ' · sem câmera (demo)');
   if(label!==lastHud){ hud.textContent=label; lastHud=label; }
 }
 requestAnimationFrame(frame);

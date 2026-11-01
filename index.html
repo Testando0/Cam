@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gestos → Partículas</title>
+<style>
+  body{margin:0;overflow:hidden;background:#05070f;font-family:system-ui,sans-serif}
+  #gl{position:fixed;inset:0;width:100vw;height:100vh}
+  #cam{position:fixed;right:12px;bottom:12px;width:160px;border-radius:12px;
+       transform:scaleX(-1);opacity:.85;border:1px solid #23405c}
+  #gesture{position:fixed;top:16px;left:20px;color:#9fffc8;font:600 20px/1.3 system-ui;
+           text-shadow:0 0 14px #2fae7a}
+  #hint{position:fixed;top:48px;left:20px;color:#8ea0c0;font:400 12px/1.5 system-ui;max-width:60vw}
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<video id="cam" autoplay playsinline muted></video>
+<div id="gesture">iniciando…</div>
+<div id="hint">✋ aberta · ✌️ dois dedos · ✊ punho · 🤘 chifres · ☝️ indicador<br>
+Sem câmera? Demo automático roda sozinho. Teclas 1–5 trocam o modo.</div>
+
+<script type="module">
+import { FilesetResolver, HandLandmarker } from
+  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+
+const TAU = Math.PI*2, wrap01 = v => v - Math.floor(v);
+const canvas = document.getElementById('gl'), ctx = canvas.getContext('2d');
+const video  = document.getElementById('cam'), hud = document.getElementById('gesture');
+let W, H, DPR;
+function resize(){ DPR = Math.min(devicePixelRatio,2); W = innerWidth; H = innerHeight;
+  canvas.width = W*DPR; canvas.height = H*DPR; ctx.setTransform(DPR,0,0,DPR,0,0); }
+resize(); addEventListener('resize', resize);
+
+/* ---------- partículas ---------- */
+const N = 1400, P = [];
+for(let i=0;i<N;i++) P.push({ u1:Math.random(), u2:Math.random(), u3:Math.random(),
+  sp:.6+Math.random()*.9, hue: Math.random()<.75 ? 95+Math.random()*60 : 45+Math.random()*10,
+  lw:1+Math.random()*1.6, x:W/2, y:H/2, ox:W/2, oy:H/2 });
+const stars = Array.from({length:120},()=>({x:Math.random(),y:Math.random(),r:Math.random()*1.2+.3}));
+
+/* ---------- estado (o "useHandStore" da demo) ---------- */
+let mode='open', cand=null, candCount=0, autoCycle=false, cycleIdx=0, nextCycle=0;
+let cx=W/2, cy=H*.45, tcx=cx, tcy=cy, camOK=false, hand=null;
+const cycle=['open','two','fist','rock','point'];
+const LABEL={open:'✋ mão aberta — explosão radial', two:'✌️ dois dedos — dispersão',
+  fist:'✊ punho — esfera comprimida', rock:'🤘 chifres — chuva de espadas',
+  point:'☝️ indicador — onda horizontal'};
+
+/* ---------- classificação do gesto ---------- */
+function classify(lm){
+  const d=(a,b)=>Math.hypot(lm[a].x-lm[b].x, lm[a].y-lm[b].y);
+  const ext=(tip,pip)=> d(tip,0) > d(pip,0)*1.08;
+  const I=ext(8,6), M=ext(12,10), R=ext(16,14),Pk=ext(20,18), cnt=I+M+R+Pk;
+  if(I&&M&&!R&&!Pk) return 'two';
+  if(I&&Pk&&!M&&!R) return 'rock';
+  if(cnt>=4)        return 'open';
+  if(I&&!M&&!R&&!Pk)return 'point';
+  if(cnt===0)       return 'fist';
+  return null;
+}
+
+/* ---------- câmera + MediaPipe (o "HandController") ---------- */
+(async()=>{ try{
+  const stream = await navigator.mediaDevices.getUserMedia({video:{width:640,height:480,facingMode:'user'}});
+  video.srcObject = stream; await video.play(); camOK = true;
+  const vision = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+  hand = await HandLandmarker.createFromOptions(vision,{ baseOptions:{
+    modelAssetPath:"https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+    delegate:"GPU"}, runningMode:"VIDEO", numHands:1 });
+}catch(e){ autoCycle = true; } })();
+
+addEventListener('keydown', e=>{ const m={'1':'open','2':'two','3':'fist','4':'rock','5':'point'}[e.key];
+  if(m){ mode=m; autoCycle=false; } });
+
+/* ---------- formações (a "Scene") ---------- */
+function target(p,t,out){
+  const R = Math.min(W,H)*.30;
+  if(mode==='open'){ const a=p.u2*TAU + t*.25 + p.u3*.5,
+      r=R*(.45+.55*p.u1)+Math.sin(t*2+p.u3*9)*10;
+    out.x=cx+Math.cos(a)*r; out.y=cy+Math.sin(a)*r; }
+  else if(mode==='fist'){ const a=p.u2*TAU + t*(1.2+p.u3*1.5), r=R*.62*Math.sqrt(p.u1);
+    out.x=cx+Math.cos(a)*r; out.y=cy+Math.sin(a)*r; }
+  else if(mode==='two'){ const xx=wrap01(p.u1+t*.03*p.sp);
+    out.x=cx+(xx-.5)*W*.9; out.y=cy+(p.u2-.5)*H*.10+Math.sin(xx*7+t)*16; }
+  else if(mode==='point'){ out.x=cx+(p.u1-.5)*W*.8;
+    out.y=cy+Math.sin(out.x*.012+t*2.2)*(28+40*p.u3)+(p.u2-.5)*14; }
+  else { /* rock = chuva */ out.x=cx+(p.u1-.5)*W*.85; out.y=wrap01(p.u2+t*.22*p.sp)*H; }
+}
+
+/* ---------- loop ---------- */
+const tgt={x:0,y:0}; let lastHud='';
+function frame(now){ requestAnimationFrame(frame); const t=now/1000;
+
+  let detected=false;
+  if(camOK && hand && video.readyState>=2){
+    const res = hand.detectForVideo(video, now);
+    if(res.landmarks?.length){ detected=true; const lm=res.landmarks[0];
+      const g=classify(lm);
+      if(g){ candCount = (g===cand)? candCount+1 : 1; cand=g; if(candCount>=3) mode=g; }
+      let px=0,py=0; for(const i of [0,5,9,13,17]){px+=lm[i].x;py+=lm[i].y;}
+      tcx=(1-px/5)*W; tcy=(py/5)*H; }
+  }
+  if(!detected){ tcx=W/2; tcy=H*.45;
+    if(autoCycle && now>nextCycle){ nextCycle=now+5000; mode=cycle[cycleIdx++%5]; } }
+  cx+=(tcx-cx)*.12; cy+=(tcy-cy)*.12;
+
+  ctx.globalCompositeOperation='source-over';
+  ctx.fillStyle='rgba(3,6,16,.30)'; ctx.fillRect(0,0,W,H);
+  ctx.globalCompositeOperation='lighter';
+  ctx.fillStyle='rgba(200,220,255,.05)';
+  for(const s of stars){ ctx.beginPath(); ctx.arc(s.x*W,s.y*H,s.r,0,TAU); ctx.fill(); }
+
+  if(mode==='rock'){ ctx.strokeStyle='rgba(255,215,150,.35)'; ctx.lineWidth=5;
+    ctx.shadowBlur=25; ctx.shadowColor='#fc9'; ctx.beginPath();
+    ctx.ellipse(cx, H*.10, Math.min(W,H)*.28, Math.min(W,H)*.07, 0, 0, TAU);
+    ctx.stroke(); ctx.shadowBlur=0; }
+
+  const trail = mode==='rock'?5:3.5, k=.09;
+  for(const p of P){ target(p,t,tgt);
+    p.ox=p.x; p.oy=p.y;
+    p.x += (p.x-p.ox)*0 + (tgt.x-p.x)*k; p.y += (tgt.y-p.y)*k;
+    const vx=p.x-p.ox, vy=p.y-p.oy;
+    ctx.strokeStyle=`hsla(${p.hue},95%,62%,.85)`; ctx.lineWidth=p.lw;
+    ctx.beginPath(); ctx.moveTo(p.x-vx*trail,p.y-vy*trail); ctx.lineTo(p.x,p.y); ctx.stroke();
+    ctx.fillStyle=`hsla(${p.hue},95%,70%,.5)`;
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.lw*.8,0,TAU); ctx.fill(); }
+
+  const label = detected||camOK ? (LABEL[mode]||'') : LABEL[mode]+' · sem câmera (demo)';
+  if(label!==lastHud){ hud.textContent=label; lastHud=label; }
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

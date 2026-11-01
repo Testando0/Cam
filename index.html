@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Partículas que imitam sua mão v4</title>
+<title>Partículas que imitam sua mão v5</title>
 <style>
   body{margin:0;overflow:hidden;background:#05070f;font-family:system-ui,sans-serif}
   #gl{position:fixed;inset:0;width:100vw;height:100vh}
@@ -18,7 +18,7 @@
 <canvas id="gl"></canvas>
 <video id="cam" autoplay playsinline muted></video>
 <div id="gesture">iniciando…</div>
-<div id="hint">As partículas imitam seu gesto (✊ ✋ ✌️ 🤘 ☝️…).
+<div id="hint">As partículas imitam seu gesto (✊ ✋ ️ 🤘 ☝️…), sempre no centro da tela.
 Teclas 1–5: formações clássicas · 6: volta ao modo imitação.</div>
 
 <script type="module">
@@ -34,11 +34,9 @@ function resize(){DPR=Math.min(devicePixelRatio,2);W=innerWidth;H=innerHeight;
 resize(); addEventListener('resize',resize);
 
 /* ---------- geometria da mão ---------- */
-// dedos: segmentos de osso (com flag de ponta)
 const BONES=[]; const addBone=(a,b,tip)=>BONES.push({a,b,tip});
-addBone(0,1,0);addBone(1,2,0);addBone(2,3,0);addBone(3,4,1);           // polegar
+addBone(0,1,0);addBone(1,2,0);addBone(2,3,0);addBone(3,4,1);
 for(const b of [5,9,13,17]){addBone(b,b+1,0);addBone(b+1,b+2,0);addBone(b+2,b+3,1);}
-// palma: 3 triângulos para preencher a área
 const TRIS=[[0,5,9],[0,9,13],[0,13,17]];
 
 /* ---------- partículas ---------- */
@@ -47,10 +45,10 @@ for(let i=0;i<N;i++){
   const base={ph:Math.random()*TAU,u1:Math.random(),u2:Math.random(),u3:Math.random(),
     sp:.6+Math.random()*.9,hue:Math.random()<.75?95+Math.random()*60:45+Math.random()*10,
     lw:1+Math.random()*1.6,x:W/2,y:H/2,ox:W/2,oy:H/2,tip:false};
-  if(Math.random()<.35){ // palma (preenchimento)
+  if(Math.random()<.35){
     const r1=Math.random(),r2=Math.random(),su=Math.sqrt(r1);
     Object.assign(base,{type:0,tri:(Math.random()*3)|0,bu:1-su,bv:r2*su,bw:su-r2*su});
-  } else {               // dedo (cápsula)
+  } else {
     const seg=BONES[(Math.random()*BONES.length)|0];
     Object.assign(base,{type:1,seg,t0:Math.random(),flow:.03+Math.random()*.05,
       rad:Math.random()*2-1});
@@ -114,27 +112,30 @@ function target(p,t,out){
 /* ---------- loop ---------- */
 const tgt={x:0,y:0}; let lastHud='';
 function frame(now){ requestAnimationFrame(frame); const t=now/1000;
+  const MCX=W/2, MCY=H*.46;                 // centro FIXO e seguro do modo imitação
 
   let detected=false;
   if(camOK&&hand&&video.readyState>=2){
     const res=hand.detectForVideo(video,now);
     if(res.landmarks?.length){ detected=true; lastSeen=now; const lm=res.landmarks[0];
-      if(mirrorAuto) mode='mirror';                       // mão voltou → imita de novo
+      if(mirrorAuto) mode='mirror';
       const g=classify(lm);
       if(g){ candCount=(g===cand)?candCount+1:1; cand=g;
         if(candCount>=3){ gestureName=g; if(mode!=='mirror') mode=g; } }
       let px=0,py=0; for(const i of [0,5,9,13,17]){px+=lm[i].x;py+=lm[i].y;}
-      tcx=(1-px/5)*W; tcy=(py/5)*H;
+      /* presets seguem a mão, mas dentro de área segura */
+      tcx=clamp((1-px/5)*W, W*.30, W*.70);
+      tcy=clamp(( py/5)*H, H*.32, H*.68);
+      /* silhueta p/ imitação: sempre centrada em (MCX,MCY) */
       const AR=(video.videoWidth/video.height)||4/3;
       let x0=9,x1=0,y0=9,y1=0;
       for(const q of lm){const X=q.x*AR;x0=Math.min(x0,X);x1=Math.max(x1,X);
                          y0=Math.min(y0,q.y);y1=Math.max(y1,q.y);}
       const dim=Math.max(x1-x0,y1-y0,0.28);
-      const S=Math.min(W,H)*.8/dim, mx=(x0+x1)/2, my=(y0+y1)/2;
-      lastW=clamp(S*0.03,3,18);                            // espessura dos dedos
-      const fresh=lm.map(q=>({x:cx-(q.x*AR-mx)*S, y:cy+(q.y-my)*S}));
-      const ok=fresh.every(q=>Number.isFinite(q.x)&&Number.isFinite(q.y)
-        &&q.x>-W*.3&&q.x<W*1.3&&q.y>-H*.3&&q.y<H*1.3);
+      const S=Math.min(W,H)*.62/dim, mx=(x0+x1)/2, my=(y0+y1)/2;
+      lastW=clamp(S*0.03,3,16);
+      const fresh=lm.map(q=>({x:MCX-(q.x*AR-mx)*S, y:MCY+(q.y-my)*S}));
+      const ok=fresh.every(q=>Number.isFinite(q.x)&&Number.isFinite(q.y));
       if(ok){ if(!SL) SL=fresh;
         else SL.forEach((q,i)=>{q.x+=(fresh[i].x-q.x)*.4;q.y+=(fresh[i].y-q.y)*.4;}); }
     }
@@ -160,17 +161,17 @@ function frame(now){ requestAnimationFrame(frame); const t=now/1000;
   const k=mirror?.22:.09, trail=mirror?2.5:(mode==='rock'?5:3.5);
   for(const p of P){
     if(mirror){
-      if(p.type===0){ // palma preenchida
+      if(p.type===0){
         const T=TRIS[p.tri],A=SL[T[0]],B=SL[T[1]],C=SL[T[2]];
         tgt.x=A.x*p.bu+B.x*p.bv+C.x*p.bw+Math.sin(t*2+p.ph)*2;
         tgt.y=A.y*p.bu+B.y*p.bv+C.y*p.bw+Math.cos(t*2+p.ph)*2;
         p.tip=false;
-      } else {        // dedo em cápsula
+      } else {
         const A=SL[p.seg.a],B=SL[p.seg.b],tt=wrap01(p.t0+t*p.flow);
         const dx=B.x-A.x,dy=B.y-A.y,L=Math.hypot(dx,dy)||1;
         const off=p.rad*lastW*(.7+.3*Math.sin(t*2+p.ph));
-        tgt.x=clamp(A.x+dx*tt+(-dy/L)*off,-W*.15,W*1.15);
-        tgt.y=clamp(A.y+dy*tt+( dx/L)*off,-H*.15,H*1.15);
+        tgt.x=A.x+dx*tt+(-dy/L)*off;
+        tgt.y=A.y+dy*tt+( dx/L)*off;
         p.tip=p.seg.tip&&tt>.8;
       }
     } else { p.tip=false; target(p,t,tgt); }
